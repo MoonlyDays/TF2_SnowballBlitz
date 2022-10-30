@@ -2,6 +2,7 @@
 #include <sdktools>
 #include <sourcemod>
 #include <tf2>
+#include <tf2items>
 #include <tf2_stocks>
 #include <tf2attributes>
 #include <dhooks>
@@ -13,6 +14,20 @@
 #define TF_MAX_CLASS_TYPES 9
 #define TF_MAX_WEAPON_SLOTS 5
 
+enum
+{
+	TF_AMMO_DUMMY,
+	TF_AMMO_PRIMARY,
+	TF_AMMO_SECONDARY,
+	TF_AMMO_METAL,
+
+	TF_AMMO_GRENADES1,
+	TF_AMMO_GRENADES2,
+	TF_AMMO_GRENADES3,
+
+	TF_AMMO_COUNT
+}
+
 #define DMG_IGNORE_MAXHEALTH DMG_BULLET
 #define DMG_IGNORE_DEBUFFS DMG_SLASH
 
@@ -22,7 +37,7 @@ public Plugin myinfo =
 	author = "Moonly Days",
 	description = "",
 	version = "1.0.0",
-	url = "https://github.com/MoonlyDays"
+	url = "https://github.com/MoonlyDays/TF2_SnowballBlitz"
 };
 
 //---------------------------------------------------------------//
@@ -40,6 +55,12 @@ ConVar sb_player_regenerate_safe_time;
 //---------------------------------------------------------------//
 Handle gHook_CTFGameRules_FlPlayerFallDamage;
 Handle gHook_CTFPlayer_TakeHealth;
+Handle gHook_CTFWeaponBase_PrimaryAttack;
+
+//---------------------------------------------------------------//
+// NATIVE SDKCalls
+//---------------------------------------------------------------//
+Handle gCall_CTFWeaponBase_SendWeaponAnim;
 
 //---------------------------------------------------------------//
 // GLOBAL DATA
@@ -81,7 +102,6 @@ public void OnPluginStart()
 	int offset = GameConfGetOffset(hGameData, "CTFGameRules::FlPlayerFallDamage");
 	gHook_CTFGameRules_FlPlayerFallDamage = DHookCreate(offset, HookType_GameRules, ReturnType_Float, ThisPointer_Ignore, CTFGameRules_FlPlayerFallDamage);
 	DHookAddParam(gHook_CTFGameRules_FlPlayerFallDamage, HookParamType_CBaseEntity);
-	DHookGamerules(gHook_CTFGameRules_FlPlayerFallDamage, false);
 
 	// CTFPlayer::TakeHealth
 	offset = GameConfGetOffset(hGameData, "CTFPlayer::TakeHealth");
@@ -89,9 +109,28 @@ public void OnPluginStart()
 	DHookAddParam(gHook_CTFPlayer_TakeHealth, HookParamType_Float);
 	DHookAddParam(gHook_CTFPlayer_TakeHealth, HookParamType_Int);
 
+	// CTFWeaponBase::PrimaryAttack
+	offset = GameConfGetOffset(hGameData, "CTFWeaponBase::PrimaryAttack");
+	gHook_CTFWeaponBase_PrimaryAttack = DHookCreate(offset, HookType_Entity, ReturnType_Void, ThisPointer_CBaseEntity, CTFWeaponBase_PrimaryAttack);
+
+	//
+	// SDK Calls
+	//
+	
+	StartPrepSDKCall(SDKCall_Entity);
+	PrepSDKCall_SetFromConf(hGameData, SDKConf_Virtual, "CTFWeaponBase::SendWeaponAnim");
+	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_Plain);
+	PrepSDKCall_SetReturnInfo(SDKType_Bool, SDKPass_Plain);
+	gCall_CTFWeaponBase_SendWeaponAnim = EndPrepSDKCall();
+
 	// Late Hook
 	SB_HookAllPlayers();
 	CreateTimer(1.0, Timer_RegenerateHealth, _, TIMER_REPEAT);
+}
+
+public void OnMapStart()
+{
+	DHookGamerules(gHook_CTFGameRules_FlPlayerFallDamage, false);
 }
 
 public void OnClientPutInServer(int client)
@@ -151,6 +190,7 @@ public void SB_SetupPlayer(int client)
 	int maxHealthBonus = sb_player_maxhealth.IntValue - baseClassHealth;
 	TF2Attrib_SetByName(client, "max health additive bonus", float(maxHealthBonus));
 	SetEntityHealth(client, sb_player_maxhealth.IntValue);
+	PrintToChatAll("SB_SetupPlayer");
 }
 
 public void SB_ValidatePlayerWeapons(int client)
@@ -177,6 +217,8 @@ public void SB_ValidatePlayerWeapons(int client)
 	{
 		SetEntPropEnt(client, Prop_Send, "m_hActiveWeapon", firstAllowedWeapon);
 	}
+
+	SB_GiveClientSnowball(client);
 }
 
 public bool SB_IsWeaponAllowed(int client, int weapon, int slot)
@@ -188,6 +230,29 @@ public bool SB_IsWeaponAllowed(int client, int weapon, int slot)
 	return false;
 }
 
+public int SB_GiveClientSnowball(int client)
+{
+	Handle itemData = TF2Items_CreateItem( OVERRIDE_ALL );
+	TF2Items_SetClassname(itemData, "tf_weapon_jar");
+	TF2Items_SetItemIndex(itemData, 1070);
+
+	int weapon = TF2Items_GiveNamedItem(client, itemData);
+	CloseHandle(itemData);
+	
+	EquipPlayerWeapon(client, weapon);
+	RequestFrame(RF_SB_GiveClientSnowball, client);
+	DHookEntity(gHook_CTFWeaponBase_PrimaryAttack, false, weapon);
+	
+	return weapon;
+}
+
+public void RF_SB_GiveClientSnowball(any client)
+{
+	SetEntProp(client, Prop_Send, "m_iAmmo", 5, 4, TF_AMMO_GRENADES1);
+	SetEntProp(client, Prop_Send, "m_iAmmo", 5, 4, TF_AMMO_GRENADES2);
+	SetEntProp(client, Prop_Send, "m_iAmmo", 5, 4, TF_AMMO_GRENADES3);
+}
+
 public Action Timer_RegenerateHealth(Handle hTimer, any data)
 {
 	float curTime = GetGameTime();
@@ -196,7 +261,7 @@ public Action Timer_RegenerateHealth(Handle hTimer, any data)
 	{
 		if(!IsValidClient(i))
 			continue;
-
+			
 		float timeSinceDamaged = curTime - g_flLastDamageTime[i];
 		if(timeSinceDamaged < sb_player_regenerate_safe_time.FloatValue)
 			continue;
@@ -228,7 +293,6 @@ public Action evPlayerSpawn(Event event, const char[] name, bool dontBroadcast)
 		return Plugin_Continue;
 
 	SB_SetupPlayer(client);
-	TF2_SetLastHealthRegenAt(client, 9999999.0);
 
 	return Plugin_Continue;
 }
@@ -266,11 +330,26 @@ public MRESReturn CTFPlayer_TakeHealth(int pThis, Handle hReturn, Handle hParams
 	if(nFlags & DMG_IGNORE_DEBUFFS)
 	{
 		PrintToChatAll("Blocked Healing!");
-		DHookSetReturn(hParams, 0);
+		DHookSetReturn(hReturn, 0);
 		return MRES_Supercede;
 	}
 	
 	return MRES_Ignored;
+}
+
+public MRESReturn CTFWeaponBase_PrimaryAttack(int pThis, Handle hReturn, Handle hParams)
+{
+	PrintToChatAll("%d", pThis);
+	CTFWeaponBase_SendWeaponAnim(pThis, 1536);
+	return MRES_Ignored;
+}
+//---------------------------------------------------------------//
+// SDK Calls
+//---------------------------------------------------------------//
+
+public bool CTFWeaponBase_SendWeaponAnim(int weapon, int anim)
+{
+	return SDKCall(gCall_CTFWeaponBase_SendWeaponAnim, weapon, anim);
 }
 
 //---------------------------------------------------------------//
@@ -352,12 +431,4 @@ public int TF2_GetClassMaxHealth(TFClassType class)
 		case TFClass_Spy:		return 125;
 		default: 				return 100;
 	}
-}
-
-public bool TF2_SetLastHealthRegenAt(int client, float time)
-{
-	int offset = FindSendPropInfo("CTFPlayer", "m_iSpawnCounter");
-	int offset2 = FindSendPropInfo("CTFPlayer", "m_hItem");
-	PrintToChatAll("%d / %d", offset, offset2);
-	return false;
 }
