@@ -52,7 +52,6 @@ public Plugin myinfo =
 // ConVars
 //---------------------------------------------------------------//
 ConVar sb_respawn_uber_time;
-ConVar sb_disable_falldamage;
 ConVar sb_player_maxspeed;
 ConVar sb_player_maxhealth;
 ConVar sb_player_regenerate_health_per_second;
@@ -65,14 +64,8 @@ ConVar sb_projectile_damage;
 // NATIVE DHOOKS HOOKS
 //---------------------------------------------------------------//
 Handle gHook_CTFPlayer_TakeHealth;
-Handle gHook_CTFWeaponBase_PrimaryAttack;
 Handle gHook_CTFWeaponBaseGrenadeProj_InitGrenade;
 Handle gHook_CTFStunBall_ApplyBallImpactEffectOnVictim;
-
-//---------------------------------------------------------------//
-// NATIVE SDKCalls
-//---------------------------------------------------------------//
-Handle gCall_CTFWeaponBase_SendWeaponAnim;
 
 //---------------------------------------------------------------//
 // GLOBAL DATA
@@ -88,7 +81,6 @@ public void OnPluginStart()
 	// ConVars
 	//
 	sb_respawn_uber_time = 		CreateConVar("sb_respawn_uber_time", 	"3", 	"How much time will players be ubercharged after respawn to prevent spawn camping.");
-	sb_disable_falldamage = 	CreateConVar("sb_disable_falldamage", 	"1", 	"If true, fall damage will be fully disabled.");
 	sb_player_maxspeed =		CreateConVar("sb_player_maxspeed", 		"300", 	"Speed of all players.");
 	sb_player_maxhealth = 		CreateConVar("sb_player_maxhealth",		"300");
 	sb_projectile_speed =		CreateConVar("sb_projectile_speed",		"1000");
@@ -123,10 +115,6 @@ public void OnPluginStart()
 	DHookAddParam(gHook_CTFPlayer_TakeHealth, HookParamType_Float);
 	DHookAddParam(gHook_CTFPlayer_TakeHealth, HookParamType_Int);
 
-	// CTFWeaponBase::PrimaryAttack
-	offset = GameConfGetOffset(hGameData, "CTFWeaponBase::PrimaryAttack");
-	gHook_CTFWeaponBase_PrimaryAttack = DHookCreate(offset, HookType_Entity, ReturnType_Void, ThisPointer_CBaseEntity, CTFWeaponBase_PrimaryAttack);
-
 	// CTFWeaponBaseGrenadeProj::InitGrenade
 	offset = GameConfGetOffset(hGameData, "CTFWeaponBaseGrenadeProj::InitGrenade");
 	gHook_CTFWeaponBaseGrenadeProj_InitGrenade = DHookCreate(offset, HookType_Entity, ReturnType_Void, ThisPointer_CBaseEntity, CTFWeaponBaseGrenadeProj_InitGrenade);
@@ -140,16 +128,6 @@ public void OnPluginStart()
 	offset = GameConfGetOffset(hGameData, "CTFStunBall::ApplyBallImpactEffectOnVictim");
 	gHook_CTFStunBall_ApplyBallImpactEffectOnVictim = DHookCreate(offset, HookType_Entity, ReturnType_Void, ThisPointer_CBaseEntity, CTFStunBall_ApplyBallImpactEffectOnVictim);
 	DHookAddParam(gHook_CTFStunBall_ApplyBallImpactEffectOnVictim, HookParamType_CBaseEntity);
-
-	//
-	// SDK Calls
-	//
-	
-	StartPrepSDKCall(SDKCall_Entity);
-	PrepSDKCall_SetFromConf(hGameData, SDKConf_Virtual, "CTFWeaponBase::SendWeaponAnim");
-	PrepSDKCall_AddParameter(SDKType_PlainOldData, SDKPass_Plain);
-	PrepSDKCall_SetReturnInfo(SDKType_Bool, SDKPass_Plain);
-	gCall_CTFWeaponBase_SendWeaponAnim = EndPrepSDKCall();
 
 	// Late Hook
 	SB_HookAllPlayers();
@@ -180,7 +158,6 @@ public void SetupNativeConVars()
 {
 	SetConVarInt(FindConVar("mp_respawnwavetime"), 0);
 	SetConVarInt(FindConVar("tf_scout_air_dash_count"), 0);
-	SetConVarInt(FindConVar("sv_proj_stunball_damage"), 100);
 }
 
 public void OnEntityCreated(int entity, const char[] classname)
@@ -338,7 +315,6 @@ public int SB_GiveClientSnowball(int client)
 	
 	EquipPlayerWeapon(client, weapon);
 	RequestFrame(RF_SB_GiveClientSnowball, client);
-	DHookEntity(gHook_CTFWeaponBase_PrimaryAttack, false, weapon);
 	
 	return weapon;
 }
@@ -512,17 +488,6 @@ public Action evPostInventoryApplication(Event event, const char[] name, bool do
 // DHOOK Callbacks
 //---------------------------------------------------------------//
 
-// CTFGameRules::FlPlayerFallDamage(CBasePlayer*)
-public MRESReturn CTFGameRules_FlPlayerFallDamage(Handle hParams)
-{
-	if(!sb_disable_falldamage.BoolValue)
-		return MRES_Ignored;
-	
-	// If we set to disable fall damage, this method should always return 0.
-	DHookSetReturn(hParams, 0);
-	return MRES_Supercede;
-}
-
 // CTFPlayer::TakeHealth(float, int)
 public MRESReturn CTFPlayer_TakeHealth(int pThis, Handle hReturn, Handle hParams)
 {
@@ -533,13 +498,6 @@ public MRESReturn CTFPlayer_TakeHealth(int pThis, Handle hReturn, Handle hParams
 		return MRES_Supercede;
 	}
 	
-	return MRES_Ignored;
-}
-
-public MRESReturn CTFWeaponBase_PrimaryAttack(int pThis, Handle hReturn, Handle hParams)
-{
-	PrintToChatAll("%d", pThis);
-	CTFWeaponBase_SendWeaponAnim(pThis, 1536);
 	return MRES_Ignored;
 }
 
@@ -591,15 +549,6 @@ public MRESReturn CTFStunBall_ApplyBallImpactEffectOnVictim(int pThis, Handle hP
 	}
 
 	return MRES_Supercede;
-}
-
-//---------------------------------------------------------------//
-// SDK Calls
-//---------------------------------------------------------------//
-
-public bool CTFWeaponBase_SendWeaponAnim(int weapon, int anim)
-{
-	return SDKCall(gCall_CTFWeaponBase_SendWeaponAnim, weapon, anim);
 }
 
 //---------------------------------------------------------------//
